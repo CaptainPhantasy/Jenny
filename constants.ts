@@ -1,0 +1,101 @@
+import { Palette, AppState } from './types';
+
+export const PALETTES: Palette[] = [
+  {
+    id: 'grayscale',
+    name: 'Charcoal Study',
+    colors: ['#000000', '#777777', '#ffffff'],
+    description: "Monochromatic (Value Study): Artists use grayscale to understand 'value'—how light or dark something is—without being distracted by color."
+  },
+  {
+    id: 'cyberpunk',
+    name: 'Neon City',
+    colors: ['#2e003e', '#b026ff', '#00f0ff'],
+    description: "Triadic Harmony: This uses high-saturation colors that are evenly spaced on the color wheel to create a vibrant, futuristic energy."
+  },
+  {
+    id: 'vintage',
+    name: 'Sepia Memories',
+    colors: ['#422e1c', '#9c7c56', '#e0d2b4'],
+    description: "Analogous Colors: These colors sit next to each other on the wheel. They create a calm, unified look often associated with old photography."
+  },
+  {
+    id: 'popart',
+    name: 'Warhol Pop',
+    colors: ['#0033cc', '#ffcc00', '#ff0066'],
+    description: "Primary Triad: Using bold Red, Yellow, and Blue creates extreme contrast, famous in the Pop Art movement of the 1960s."
+  },
+  {
+    id: 'matrix',
+    name: 'The Code',
+    colors: ['#001100', '#006600', '#33ff33'],
+    description: "Monochromatic Green: Varying shades of a single hue (green) creates an eerie, digital atmosphere."
+  },
+  {
+    id: 'sunset',
+    name: 'Synthwave',
+    colors: ['#241734', '#c52d6a', '#f9a875'],
+    description: "Warm Gradient: Moving from deep purple to warm orange mimics the scattering of light during a sunset."
+  },
+];
+
+export interface Preset {
+  id: string;
+  name: string;
+  settings: Partial<AppState>;
+}
+
+export const PRESETS: Preset[] = [
+  {
+    id: 'default',
+    name: 'Default',
+    settings: {
+      steps: 6,
+      pixelation: 2048,
+      activePaletteId: 'cyberpunk',
+      coloringBookMode: false,
+      invertColors: false,
+      chromaticAberration: 0.0,
+      edgeThreshold: 0.15,
+    }
+  },
+  {
+    id: 'retro_game',
+    name: '8-Bit Game',
+    settings: {
+      steps: 4,
+      pixelation: 60,
+      activePaletteId: 'matrix',
+      coloringBookMode: false,
+      invertColors: false,
+      chromaticAberration: 0.02,
+      edgeThreshold: 0.15,
+    }
+  },
+  {
+    id: 'comic',
+    name: 'Comic Book',
+    settings: {
+      steps: 5,
+      pixelation: 2048,
+      activePaletteId: 'popart',
+      coloringBookMode: true,
+      invertColors: true,
+      chromaticAberration: 0.005,
+      edgeThreshold: 0.1,
+    }
+  },
+  {
+    id: 'sketch',
+    name: 'Pencil Sketch',
+    settings: {
+      steps: 3,
+      pixelation: 2048,
+      activePaletteId: 'grayscale',
+      coloringBookMode: true,
+      invertColors: false,
+      chromaticAberration: 0.0,
+      edgeThreshold: 0.25,
+    }
+  }
+];

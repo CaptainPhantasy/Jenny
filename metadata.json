@@ -1,0 +1,8 @@
+{
+  "name": "Posterization Studio",
+  "description": "A creative educational tool combining art theory with real-time image processing. Features posterization, palette re-mapping, edge detection for coloring books, and classic art grid overlays.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
