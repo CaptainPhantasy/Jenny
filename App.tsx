@@ -90,11 +90,17 @@ const App: React.FC = () => {
     if (e.target.files && e.target.files[0]) {
       const uri = await fileToDataUri(e.target.files[0]);
       setState(prev => ({ ...prev, imageSrc: uri, isVideo: false }));
+      // On phones the controls are a drawer covering the canvas — close it so the
+      // student immediately sees their loaded picture instead of the panel.
+      setMobileOpen(false);
     }
   };
 
   const handleCamera = () => {
     setState(prev => ({ ...prev, isVideo: true, imageSrc: null }));
+    // Close the mobile drawer so the live camera and its shutter/flip buttons
+    // (which sit on the canvas) aren't hidden behind the control panel.
+    setMobileOpen(false);
   };
 
   // Take the photo: freeze the current camera frame into a still and load it as
