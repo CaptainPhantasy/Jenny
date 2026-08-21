@@ -47,9 +47,24 @@ export interface Preset {
 
 export const PRESETS: Preset[] = [
   {
-    id: 'default',
-    name: 'Default',
+    id: 'three_tone',
+    name: '3-Color Poster',
     settings: {
+      threeToneMode: true,
+      shadowThreshold: 0.33,
+      highlightThreshold: 0.66,
+      pixelation: 2048,
+      activePaletteId: 'grayscale',
+      coloringBookMode: false,
+      invertColors: false,
+      chromaticAberration: 0.0,
+    }
+  },
+  {
+    id: 'default',
+    name: 'Gradient',
+    settings: {
+      threeToneMode: false,
       steps: 6,
       pixelation: 2048,
       activePaletteId: 'cyberpunk',
@@ -63,6 +78,7 @@ export const PRESETS: Preset[] = [
     id: 'retro_game',
     name: '8-Bit Game',
     settings: {
+      threeToneMode: false,
       steps: 4,
       pixelation: 60,
       activePaletteId: 'matrix',
@@ -76,6 +92,7 @@ export const PRESETS: Preset[] = [
     id: 'comic',
     name: 'Comic Book',
     settings: {
+      threeToneMode: false,
       steps: 5,
       pixelation: 2048,
       activePaletteId: 'popart',
@@ -89,6 +106,7 @@ export const PRESETS: Preset[] = [
     id: 'sketch',
     name: 'Pencil Sketch',
     settings: {
+      threeToneMode: false,
       steps: 3,
       pixelation: 2048,
       activePaletteId: 'grayscale',

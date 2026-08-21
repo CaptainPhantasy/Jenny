@@ -1,9 +1,9 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Controls } from './components/Controls';
 import { CanvasArea } from './components/CanvasArea';
 import { GridOverlay } from './components/GridOverlay';
 import { Tooltip } from './components/Tooltip';
-import { AppState, DEFAULT_IMAGE } from './types';
+import { AppState, DEFAULT_IMAGE, Palette } from './types';
 import { PALETTES } from './constants';
 import { fileToDataUri } from './services/imageService';
 import { useHistory } from './components/HistoryHook';
@@ -15,9 +15,13 @@ const INITIAL_STATE: AppState = {
   isVideo: false,
   steps: 6,
   pixelation: 2048,
-  activePaletteId: 'cyberpunk',
+  activePaletteId: 'grayscale',
   coloringBookMode: false,
   gridSize: 0,
+  threeToneMode: true,
+  shadowThreshold: 0.33,
+  highlightThreshold: 0.66,
+  customColors: ['#1a1a2e', '#e94560', '#f5f5f5'],
   invertColors: false,
   flipX: false,
   flipY: false,
@@ -35,9 +39,21 @@ const App: React.FC = () => {
   const [canvasRef, setCanvasRef] = useState<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [imageAspect, setImageAspect] = useState<number | null>(null);
 
-  // Derived
-  const activePalette = PALETTES.find(p => p.id === state.activePaletteId) || PALETTES[0];
+  // Derived active palette. When 'custom' is selected we build a palette from the
+  // user-chosen colors so they can pick their own Dark / Midtone / Light.
+  const activePalette = useMemo<Palette>(() => {
+    if (state.activePaletteId === 'custom') {
+      return {
+        id: 'custom',
+        name: 'Custom Colors',
+        colors: state.customColors,
+        description: 'Your own three colors: choose a dark, a midtone, and a light color to build a clean three-tone piece.',
+      };
+    }
+    return PALETTES.find(p => p.id === state.activePaletteId) || PALETTES[0];
+  }, [state.activePaletteId, state.customColors]);
 
   // Handlers
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -111,7 +127,7 @@ const App: React.FC = () => {
       pixelation: Math.random() > 0.5 ? 2048 : Math.floor(Math.random() * 480) + 20,
       activePaletteId: randomPalette.id,
       coloringBookMode: Math.random() > 0.8,
-      gridSize: Math.random() > 0.5 ? 0 : [3,4,5][Math.floor(Math.random() * 3)],
+      gridSize: Math.random() > 0.5 ? 0 : [0.5, 1, 2][Math.floor(Math.random() * 3)],
       invertColors: Math.random() > 0.8,
       chromaticAberration: Math.random() > 0.7 ? Math.random() * 0.05 : 0.0,
     }));
@@ -232,12 +248,13 @@ const App: React.FC = () => {
 
         {/* Canvas Container */}
         <div className="flex-1 relative bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')]">
-            <GridOverlay size={state.gridSize} />
+            <GridOverlay inches={state.gridSize} imageAspect={imageAspect} />
             
             <CanvasArea 
               state={state} 
               activePalette={activePalette}
               onCanvasReady={setCanvasRef}
+              onImageLoaded={setImageAspect}
             />
 
             {/* Tooltip Popup */}

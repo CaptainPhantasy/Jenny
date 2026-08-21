@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Upload, Camera, Download, Grid3X3, Palette as PaletteIcon, Eraser, FileDigit, Sliders, RefreshCcw, Maximize, Scan } from 'lucide-react';
+import { Upload, Camera, Download, Grid3X3, Palette as PaletteIcon, Eraser, FileDigit, Sliders, RefreshCcw, Maximize, Scan, Layers } from 'lucide-react';
 import { Palette, AppState } from '../types';
 import { PALETTES, PRESETS, Preset } from '../constants';
 
@@ -22,6 +22,28 @@ export const Controls: React.FC<ControlsProps> = ({
 
   const handlePaletteSelect = (p: Palette) => {
     setState(prev => ({ ...prev, activePaletteId: p.id }));
+  };
+
+  // Switch to custom colors. Seed the pickers from the currently active palette
+  // so the teacher can tweak from a known-good starting point.
+  const handleCustomSelect = () => {
+    setState(prev => {
+      if (prev.activePaletteId === 'custom') return prev;
+      const current = PALETTES.find(p => p.id === prev.activePaletteId);
+      return {
+        ...prev,
+        activePaletteId: 'custom',
+        customColors: current ? [...current.colors] as [string, string, string] : prev.customColors,
+      };
+    });
+  };
+
+  const handleCustomColorChange = (index: 0 | 1 | 2, value: string) => {
+    setState(prev => {
+      const next = [...prev.customColors] as [string, string, string];
+      next[index] = value;
+      return { ...prev, customColors: next };
+    });
   };
 
   // Helper to convert internal resolution (20-2048) to slider percentage (100-0)
@@ -110,24 +132,91 @@ export const Controls: React.FC<ControlsProps> = ({
           </div>
         </div>
 
-        {/* Levels / Steps */}
-        <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-              <PaletteIcon className="w-4 h-4" /> Detail Levels
-            </h3>
-            <span className="text-xs font-mono bg-slate-800 px-2 py-1 rounded text-cyan-400">{state.steps} Steps</span>
+        {/* Finish Style: Three-Tone vs Gradient */}
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+            <Layers className="w-4 h-4" /> Finish Style
+          </h3>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setState(prev => ({ ...prev, threeToneMode: true }))}
+              className={`p-2 rounded-lg text-xs font-bold border transition-all ${state.threeToneMode ? 'bg-violet-500/20 text-violet-300 border-violet-500 ring-1 ring-violet-500/50' : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'}`}
+            >
+              3-Color Poster
+            </button>
+            <button
+              onClick={() => setState(prev => ({ ...prev, threeToneMode: false }))}
+              className={`p-2 rounded-lg text-xs font-bold border transition-all ${!state.threeToneMode ? 'bg-violet-500/20 text-violet-300 border-violet-500 ring-1 ring-violet-500/50' : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'}`}
+            >
+              Gradient
+            </button>
           </div>
-          <input
-            type="range"
-            min="2"
-            max="16"
-            step="1"
-            value={state.steps}
-            onChange={(e) => setState(prev => ({ ...prev, steps: parseInt(e.target.value) }))}
-            className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-violet-500"
-          />
+          <p className="text-[10px] text-slate-500">
+            {state.threeToneMode
+              ? 'Clean 3-color finished piece — every pixel becomes exactly dark, midtone, or light. No blended undertones.'
+              : 'Smooth stepped gradient that blends between the three palette colors.'}
+          </p>
+
+          {/* Tone Balance (only relevant in 3-color mode) */}
+          {state.threeToneMode && (
+            <div className="space-y-3 p-3 bg-slate-800 rounded-xl border border-slate-700">
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-slate-300">Dark ↔ Midtone split</span>
+                <span className="text-[10px] text-cyan-400 font-mono">{state.shadowThreshold.toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                min="0.05"
+                max="0.6"
+                step="0.01"
+                value={state.shadowThreshold}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  setState(prev => ({ ...prev, shadowThreshold: Math.min(v, prev.highlightThreshold - 0.02) }));
+                }}
+                className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-violet-500"
+              />
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-slate-300">Midtone ↔ Light split</span>
+                <span className="text-[10px] text-cyan-400 font-mono">{state.highlightThreshold.toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                min="0.4"
+                max="0.95"
+                step="0.01"
+                value={state.highlightThreshold}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  setState(prev => ({ ...prev, highlightThreshold: Math.max(v, prev.shadowThreshold + 0.02) }));
+                }}
+                className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+              />
+              <p className="text-[10px] text-slate-500">Slide to control how much of the image reads as dark, midtone, and light.</p>
+            </div>
+          )}
         </div>
+
+        {/* Levels / Steps (Gradient mode only) */}
+        {!state.threeToneMode && (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                <PaletteIcon className="w-4 h-4" /> Detail Levels
+              </h3>
+              <span className="text-xs font-mono bg-slate-800 px-2 py-1 rounded text-cyan-400">{state.steps} Steps</span>
+            </div>
+            <input
+              type="range"
+              min="2"
+              max="16"
+              step="1"
+              value={state.steps}
+              onChange={(e) => setState(prev => ({ ...prev, steps: parseInt(e.target.value) }))}
+              className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-violet-500"
+            />
+          </div>
+        )}
 
          {/* Glitch / Pixelate */}
          <div className="space-y-4">
@@ -176,7 +265,44 @@ export const Controls: React.FC<ControlsProps> = ({
                 </span>
               </button>
             ))}
+
+            {/* Custom colors tile */}
+            <button
+              onClick={handleCustomSelect}
+              className={`
+                relative p-2 rounded-lg border transition-all text-left group
+                ${state.activePaletteId === 'custom'
+                  ? 'bg-slate-700 border-violet-500 ring-1 ring-violet-500/50'
+                  : 'bg-slate-800/50 border-slate-700 hover:bg-slate-700'}
+              `}
+            >
+              <div className="flex h-6 w-full rounded-md overflow-hidden mb-2">
+                {state.customColors.map((c, i) => (
+                  <div key={i} style={{ backgroundColor: c }} className="flex-1 h-full" />
+                ))}
+              </div>
+              <span className={`text-xs font-medium block truncate ${state.activePaletteId === 'custom' ? 'text-white' : 'text-slate-400'}`}>
+                Custom
+              </span>
+            </button>
           </div>
+
+          {/* Custom color pickers */}
+          {state.activePaletteId === 'custom' && (
+            <div className="grid grid-cols-3 gap-2 p-3 bg-slate-800 rounded-xl border border-slate-700">
+              {([['Dark', 0], ['Midtone', 1], ['Light', 2]] as const).map(([label, idx]) => (
+                <label key={label} className="flex flex-col items-center gap-1 cursor-pointer">
+                  <input
+                    type="color"
+                    value={state.customColors[idx]}
+                    onChange={(e) => handleCustomColorChange(idx, e.target.value)}
+                    className="w-full h-8 rounded cursor-pointer bg-transparent border border-slate-600"
+                  />
+                  <span className="text-[10px] text-slate-400">{label}</span>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Educational Tools */}
@@ -222,11 +348,13 @@ export const Controls: React.FC<ControlsProps> = ({
             </button>
           </div>
 
-          {/* Grid Toggle */}
+          {/* Grid Toggle (physical inches) */}
           <div className="space-y-2">
-            <span className="text-xs text-slate-400 block mb-1">Drawing Grid</span>
+            <span className="text-xs text-slate-400 block mb-1 flex items-center gap-2">
+              <Grid3X3 className="w-3.5 h-3.5" /> Drawing Grid
+            </span>
             <div className="grid grid-cols-4 gap-2">
-              {[0, 3, 4, 5].map((size) => (
+              {[0, 0.5, 1, 2].map((size) => (
                 <button
                   key={size}
                   onClick={() => setState(prev => ({ ...prev, gridSize: size }))}
@@ -237,10 +365,11 @@ export const Controls: React.FC<ControlsProps> = ({
                       : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'}
                   `}
                 >
-                  {size === 0 ? 'Off' : `${size}x${size}`}
+                  {size === 0 ? 'Off' : `${size}"`}
                 </button>
               ))}
             </div>
+            <p className="text-[10px] text-slate-500">Overlays a physical inch grid on the artwork for scaling drawings.</p>
           </div>
         </div>
 

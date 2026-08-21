@@ -7,9 +7,10 @@ interface CanvasAreaProps {
   state: AppState;
   activePalette: Palette;
   onCanvasReady: (canvas: HTMLCanvasElement) => void;
+  onImageLoaded?: (aspect: number) => void;
 }
 
-export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, onCanvasReady }) => {
+export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, onCanvasReady, onImageLoaded }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const materialRef = useRef<PosterizationMaterial | null>(null);
@@ -33,8 +34,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
     });
     renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
-    containerRef.current.appendChild(renderer.domElement);
-    onCanvasReady(renderer.domElement);
+    // Defensive: remove any stale canvas left behind (e.g. by a StrictMode
+    // double-mount or HMR) so we never accumulate orphaned canvases in the DOM.
+    containerRef.current.querySelectorAll('canvas').forEach((el) => el.remove());
+    const canvasEl = renderer.domElement;
+    containerRef.current.appendChild(canvasEl);
+    onCanvasReady(canvasEl);
     rendererRef.current = renderer;
 
     // Setup Scene
@@ -74,6 +79,14 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
       if (!containerRef.current || !renderer || !camera) return;
       const w = containerRef.current.clientWidth;
       const h = containerRef.current.clientHeight;
+      // Guard against a zero dimension during initial layout — a 0-height canvas
+      // renders nothing (the old "black canvas" bug). The container's size never
+      // changes after mount, so the ResizeObserver won't fire again to correct it;
+      // instead retry on the next animation frame until the layout has resolved.
+      if (w === 0 || h === 0) {
+        requestAnimationFrame(handleResize);
+        return;
+      }
       renderer.setSize(w, h);
       
       // Update Camera Aspect
@@ -92,15 +105,24 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
     };
     window.addEventListener('resize', handleResize);
 
+    // A ResizeObserver drives sizing off actual layout. This fixes two issues the
+    // window-resize-only approach missed: (1) a 0-height canvas on first paint, and
+    // (2) the canvas not resizing when the sidebar toggles (Zen mode) since that
+    // changes the container width without firing a window resize event.
+    const ro = new ResizeObserver(handleResize);
+    ro.observe(containerRef.current);
+
     return () => {
       window.removeEventListener('resize', handleResize);
+      ro.disconnect();
       cancelAnimationFrame(requestRef.current!);
       renderer.dispose();
       (material as THREE.Material).dispose();
       geometry.dispose();
-      if (containerRef.current) {
-        containerRef.current.removeChild(renderer.domElement);
-      }
+      // Remove the exact canvas element this effect created. Using .remove()
+      // (rather than parent.removeChild) is robust even if the container ref has
+      // changed, guaranteeing no orphaned canvas survives a StrictMode re-mount.
+      canvasEl.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run once on mount
@@ -144,6 +166,9 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
     materialRef.current.edgeOnly = state.coloringBookMode;
     materialRef.current.edgeThreshold = state.edgeThreshold;
     materialRef.current.aberration = state.chromaticAberration;
+    materialRef.current.threeTone = state.threeToneMode;
+    materialRef.current.shadowThreshold = state.shadowThreshold;
+    materialRef.current.highlightThreshold = state.highlightThreshold;
     
     if (state.invertColors) {
       materialRef.current.setPalette(
@@ -158,7 +183,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
         activePalette.colors[2]
       );
     }
-  }, [state.steps, state.pixelation, state.coloringBookMode, state.edgeThreshold, state.chromaticAberration, state.invertColors, activePalette]);
+  }, [state.steps, state.pixelation, state.coloringBookMode, state.edgeThreshold, state.chromaticAberration, state.invertColors, state.threeToneMode, state.shadowThreshold, state.highlightThreshold, activePalette]);
 
   // Handle Flips
   useEffect(() => {
@@ -177,6 +202,9 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
         tex.magFilter = THREE.LinearFilter;
         materialRef.current?.setTexture(tex);
         updatePlaneAspect();
+        if (tex.image && tex.image.width && tex.image.height) {
+          onImageLoaded?.(tex.image.width / tex.image.height);
+        }
       });
     }
   }, [state.imageSrc]);
@@ -201,7 +229,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
         textureRef.current = tex;
         materialRef.current?.setTexture(tex);
         // Plane aspect will be updated in loop or we wait for metadata
-        video.addEventListener('loadedmetadata', updatePlaneAspect);
+        video.addEventListener('loadedmetadata', () => {
+          updatePlaneAspect();
+          if (video.videoWidth && video.videoHeight) {
+            onImageLoaded?.(video.videoWidth / video.videoHeight);
+          }
+        });
       }).catch(err => console.error("Webcam error:", err));
 
       return () => {
