@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Controls } from './components/Controls';
-import { CanvasArea, ExportFn } from './components/CanvasArea';
+import { CanvasArea, ExportFn, CaptureFn } from './components/CanvasArea';
 import { GridOverlay } from './components/GridOverlay';
 import { Tooltip } from './components/Tooltip';
 import { AppState, DEFAULT_IMAGE, Palette } from './types';
 import { PALETTES } from './constants';
 import { fileToDataUri } from './services/imageService';
 import { useHistory } from './components/HistoryHook';
-import { Maximize, Minimize, Copy, Code, EyeOff, Undo, Redo, Shuffle, Settings2, Menu, Download } from 'lucide-react';
+import { Maximize, Minimize, Copy, Code, EyeOff, Undo, Redo, Shuffle, Settings2, Menu, Download, SwitchCamera } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const INITIAL_STATE: AppState = {
@@ -43,6 +43,11 @@ const App: React.FC = () => {
 
   // Imperative handle to the high-fidelity export function owned by CanvasArea.
   const exportRef = useRef<ExportFn | null>(null);
+  // Imperative handle to snap a still frame from the live camera.
+  const captureRef = useRef<CaptureFn | null>(null);
+  // Which camera the live feed uses. Not part of undo history — it's a device
+  // choice, not an edit. Defaults to the front camera for selfies.
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
 
   // Responsive layout state. On small screens the control panel becomes a
   // slide-in drawer; on md+ it is docked. `mobileOpen` tracks the drawer.
@@ -85,11 +90,27 @@ const App: React.FC = () => {
     if (e.target.files && e.target.files[0]) {
       const uri = await fileToDataUri(e.target.files[0]);
       setState(prev => ({ ...prev, imageSrc: uri, isVideo: false }));
+      // On phones the controls are a drawer covering the canvas — close it so the
+      // student immediately sees their loaded picture instead of the panel.
+      setMobileOpen(false);
     }
   };
 
   const handleCamera = () => {
     setState(prev => ({ ...prev, isVideo: true, imageSrc: null }));
+    // Close the mobile drawer so the live camera and its shutter/flip buttons
+    // (which sit on the canvas) aren't hidden behind the control panel.
+    setMobileOpen(false);
+  };
+
+  // Take the photo: freeze the current camera frame into a still and load it as
+  // the editable image, then turn the camera off. If the frame isn't ready yet
+  // we simply leave the camera running so the student can try again.
+  const handleTakePhoto = () => {
+    const uri = captureRef.current?.();
+    if (uri) {
+      setState(prev => ({ ...prev, imageSrc: uri, isVideo: false }));
+    }
   };
 
   // Produce the high-res, WYSIWYG PNG blob from the offscreen export pipeline.
@@ -199,12 +220,18 @@ const App: React.FC = () => {
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen();
-      setIsFullscreen(true);
     } else {
       document.exitFullscreen();
-      setIsFullscreen(false);
     }
+    // `isFullscreen` is synced by the fullscreenchange listener below rather than
+    // set optimistically here, so exiting via the Esc key keeps the icon correct.
   };
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
 
   const randomizeSettings = () => {
     const randomPalette = PALETTES[Math.floor(Math.random() * PALETTES.length)];
@@ -387,8 +414,35 @@ const App: React.FC = () => {
               onCanvasReady={setCanvasRef}
               onImageLoaded={setImageAspect}
               exportApiRef={exportRef}
+              captureApiRef={captureRef}
+              facingMode={facingMode}
               onRequestSave={handleExportAndSave}
             />
+
+            {/* Camera controls — only while the live camera is running. The
+                shutter freezes the current frame into an editable still; the
+                flip button swaps between front and rear cameras. */}
+            {state.isVideo && (
+              <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] z-20 pointer-events-none">
+                <button
+                  onClick={handleTakePhoto}
+                  className="pointer-events-auto flex items-center gap-2 px-6 py-3 rounded-full bg-white text-slate-900 font-bold shadow-2xl ring-4 ring-white/30 hover:scale-105 active:scale-95 transition-transform"
+                  title="Take photo"
+                  aria-label="Take photo"
+                >
+                  <span className="inline-block w-5 h-5 rounded-full border-4 border-slate-900" />
+                  Take Photo
+                </button>
+                <button
+                  onClick={() => setFacingMode(f => (f === 'user' ? 'environment' : 'user'))}
+                  className="pointer-events-auto p-3 rounded-full bg-slate-900/70 text-white shadow-2xl ring-2 ring-white/30 hover:bg-slate-800 hover:scale-105 active:scale-95 transition-all backdrop-blur-sm"
+                  title="Switch camera (front/back)"
+                  aria-label="Switch camera"
+                >
+                  <SwitchCamera className="w-6 h-6" />
+                </button>
+              </div>
+            )}
 
             {/* Tooltip Popup */}
             <Tooltip

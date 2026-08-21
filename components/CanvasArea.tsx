@@ -6,18 +6,25 @@ import { PosterizationMaterial } from '../webgl/PosterizationMaterial';
 /** Signature of the imperative export function exposed to the parent. */
 export type ExportFn = () => Promise<Blob | null>;
 
+/** Grabs the current camera frame as a still image data URI (or null). */
+export type CaptureFn = () => string | null;
+
 interface CanvasAreaProps {
   state: AppState;
   activePalette: Palette;
   onCanvasReady: (canvas: HTMLCanvasElement) => void;
   onImageLoaded?: (aspect: number) => void;
+  /** Which camera to open: 'user' (front / selfie) or 'environment' (rear). */
+  facingMode?: 'user' | 'environment';
   /** Parent-owned ref that receives a function to render a high-res PNG blob. */
   exportApiRef?: React.MutableRefObject<ExportFn | null>;
+  /** Parent-owned ref that receives a function to snap a still from the camera. */
+  captureApiRef?: React.MutableRefObject<CaptureFn | null>;
   /** Called when the user right-clicks / long-presses the canvas to save. */
   onRequestSave?: () => void;
 }
 
-export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, onCanvasReady, onImageLoaded, exportApiRef, onRequestSave }) => {
+export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, onCanvasReady, onImageLoaded, facingMode = 'user', exportApiRef, captureApiRef, onRequestSave }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const materialRef = useRef<PosterizationMaterial | null>(null);
@@ -79,10 +86,13 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
 
     // Animation Loop
     const animate = () => {
-      if (state.isVideo && textureRef.current && videoElementRef.current) {
-        if (videoElementRef.current.readyState >= videoElementRef.current.HAVE_CURRENT_DATA) {
-          textureRef.current.needsUpdate = true;
-        }
+      // Keep the live camera/video feed flowing. We detect the video texture by
+      // type rather than reading `state.isVideo` here: this closure is created
+      // once on mount, so `state.isVideo` would be permanently stale (false).
+      const tex = textureRef.current as THREE.VideoTexture | null;
+      const video = videoElementRef.current;
+      if (tex?.isVideoTexture && video && video.readyState >= video.HAVE_CURRENT_DATA) {
+        tex.needsUpdate = true;
       }
       renderer.render(scene, camera);
       requestRef.current = requestAnimationFrame(animate);
@@ -155,8 +165,17 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
   // Helper to adjust plane scale to match image aspect ratio within container
   const updatePlaneAspect = () => {
     if (!textureRef.current || !planeRef.current || !cameraRef.current || !containerRef.current) return;
-    
-    const imageAspect = textureRef.current.image.width / textureRef.current.image.height;
+
+    // Read the source's intrinsic size. A `<video>` element (camera / Selfie
+    // Station) exposes its size as videoWidth/videoHeight — its `.width`/`.height`
+    // are the (usually unset, i.e. 0) HTML attributes. Falling back to those
+    // would make the aspect NaN and collapse the plane, so prefer the real dims.
+    const src = textureRef.current.image as HTMLImageElement & HTMLVideoElement;
+    const iw = src.naturalWidth || src.videoWidth || src.width || 0;
+    const ih = src.naturalHeight || src.videoHeight || src.height || 0;
+    if (!iw || !ih) return; // Not ready yet — avoid setting a NaN scale.
+
+    const imageAspect = iw / ih;
     const containerAspect = containerRef.current.clientWidth / containerRef.current.clientHeight;
     
     // Fit 'contain' logic for the plane
@@ -236,40 +255,64 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
 
   // Handle Video/Webcam Source
   useEffect(() => {
-    if (state.isVideo) {
-      // Create hidden video element
-      const video = document.createElement('video');
-      video.autoplay = true;
-      video.muted = true;
-      video.playsInline = true;
-      videoElementRef.current = video;
+    if (!state.isVideo) return;
 
-      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-        video.srcObject = stream;
-        video.play();
-        
-        const tex = new THREE.VideoTexture(video);
-        tex.minFilter = THREE.LinearFilter;
-        tex.magFilter = THREE.LinearFilter;
-        textureRef.current = tex;
-        materialRef.current?.setTexture(tex);
-        // Plane aspect will be updated in loop or we wait for metadata
-        video.addEventListener('loadedmetadata', () => {
-          updatePlaneAspect();
-          if (video.videoWidth && video.videoHeight) {
-            onImageLoaded?.(video.videoWidth / video.videoHeight);
-          }
-        });
-      }).catch(err => console.error("Webcam error:", err));
+    // Create hidden video element
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+    videoElementRef.current = video;
 
-      return () => {
-        if (video.srcObject) {
-          const tracks = (video.srcObject as MediaStream).getTracks();
-          tracks.forEach(track => track.stop());
+    // Guards against a race when the effect is torn down (unmount, camera off,
+    // or a fast facingMode flip) BEFORE getUserMedia resolves: the stream would
+    // otherwise arrive after cleanup and keep the camera on. We track the stream
+    // in a closure var and a cancelled flag so cleanup can always stop it.
+    let cancelled = false;
+    let stream: MediaStream | null = null;
+
+    // Open the requested camera. facingMode is a soft constraint, so devices
+    // with a single camera (most laptops) simply use what they have; phones
+    // honour it so the flip button can swap between front and rear cameras.
+    navigator.mediaDevices.getUserMedia({ video: { facingMode } }).then((s) => {
+      stream = s;
+      if (cancelled) {
+        // We already cleaned up — this stream is orphaned. Stop it immediately
+        // so the camera indicator turns off and we don't leak a second camera.
+        s.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      video.srcObject = s;
+      // play() can reject with an AbortError when the source is swapped quickly
+      // (e.g. a fast camera flip). It's harmless here (muted autoplay), so we
+      // swallow it rather than let it surface as an unhandled promise rejection.
+      video.play().catch(() => {});
+
+      const tex = new THREE.VideoTexture(video);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      textureRef.current = tex;
+      materialRef.current?.setTexture(tex);
+      // Plane aspect will be updated in loop or we wait for metadata
+      video.addEventListener('loadedmetadata', () => {
+        updatePlaneAspect();
+        if (video.videoWidth && video.videoHeight) {
+          onImageLoaded?.(video.videoWidth / video.videoHeight);
         }
-      };
-    }
-  }, [state.isVideo]);
+      });
+    }).catch((err) => console.error('Webcam error:', err));
+
+    return () => {
+      cancelled = true;
+      // Stop whichever stream exists: the one on the element, or one that
+      // resolved into the closure (covers the resolve-after-cleanup race).
+      const active = (video.srcObject as MediaStream | null) || stream;
+      active?.getTracks().forEach((t) => t.stop());
+      video.srcObject = null;
+    };
+    // Re-runs when facingMode changes too: the cleanup stops the old camera's
+    // tracks and this effect reopens the stream on the newly selected camera.
+  }, [state.isVideo, facingMode]);
 
   // --- High-fidelity export -------------------------------------------------
   // Renders the CURRENT look into an offscreen buffer at the SOURCE image's
@@ -402,13 +445,30 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
     return await new Promise<Blob | null>((resolve) => out.toBlob((b) => resolve(b), 'image/png'));
   };
 
-  // Keep the parent's ref pointed at the freshest closure (captures latest state),
-  // and clear it when this component unmounts to avoid dangling references.
+  // Snap the current live camera frame into a still image. We capture the RAW
+  // video frame (not the shader result) so the still stays fully editable — the
+  // poster/palette effect is re-applied live once it loads back in as an image.
+  const captureStill: CaptureFn = () => {
+    const video = videoElementRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) return null;
+    const c = document.createElement('canvas');
+    c.width = video.videoWidth;
+    c.height = video.videoHeight;
+    const ctx = c.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  };
+
+  // Keep the parent's refs pointed at the freshest closures (captures latest
+  // state), and clear them on unmount to avoid dangling references.
   useEffect(() => {
-    if (exportApiRef) {
-      exportApiRef.current = doExport;
-      return () => { exportApiRef.current = null; };
-    }
+    if (exportApiRef) exportApiRef.current = doExport;
+    if (captureApiRef) captureApiRef.current = captureStill;
+    return () => {
+      if (exportApiRef) exportApiRef.current = null;
+      if (captureApiRef) captureApiRef.current = null;
+    };
   });
 
   return (
