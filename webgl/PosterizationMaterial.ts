@@ -22,6 +22,9 @@ const fragmentShader = `
   uniform float uEdgeThreshold;
   uniform float uAberration;
   uniform vec2 uResolution;
+  uniform float uThreeTone;       // 1.0 = hard 3-color mapping (no blending)
+  uniform float uShadowThresh;    // luminance below this -> shadow color
+  uniform float uHighlightThresh; // luminance above this -> highlight color
   
   varying vec2 vUv;
 
@@ -55,22 +58,37 @@ const fragmentShader = `
 
     // 2. Posterization Logic
     float lum = getLuminance(texColor.rgb);
-    
-    // Create 'steps' - effectively floor(lum * steps) / steps
-    // We adjust denominator to allow for full range
-    float stepped = floor(lum * uSteps) / (uSteps - 1.0);
-    stepped = clamp(stepped, 0.0, 1.0);
 
-    // 3. Palette Re-mapping (Tri-Color Map)
+    // 3. Palette Re-mapping
     vec3 finalColor;
-    
-    // Mix based on intensity
-    if (stepped < 0.5) {
-      // Interpolate between Shadow (Color1) and Midtone (Color2)
-      finalColor = mix(uColor1, uColor2, stepped * 2.0);
+
+    if (uThreeTone > 0.5) {
+      // --- THREE-TONE POSTER MODE ---
+      // Clean, finished 3-color piece. Each pixel becomes EXACTLY one of the
+      // three palette colors (dark / midtone / light) based on its luminance.
+      // No mixing/interpolation -> no muddy "orange" undertones between colors.
+      if (lum < uShadowThresh) {
+        finalColor = uColor1;      // Dark / shadow
+      } else if (lum > uHighlightThresh) {
+        finalColor = uColor3;      // Light / highlight
+      } else {
+        finalColor = uColor2;      // Midtone
+      }
     } else {
-      // Interpolate between Midtone (Color2) and Highlight (Color3)
-      finalColor = mix(uColor2, uColor3, (stepped - 0.5) * 2.0);
+      // --- CLASSIC POSTERIZATION MODE (stepped gradient) ---
+      // Create 'steps' - effectively floor(lum * steps) / steps
+      // We adjust denominator to allow for full range
+      float stepped = floor(lum * uSteps) / (uSteps - 1.0);
+      stepped = clamp(stepped, 0.0, 1.0);
+
+      // Mix based on intensity
+      if (stepped < 0.5) {
+        // Interpolate between Shadow (Color1) and Midtone (Color2)
+        finalColor = mix(uColor1, uColor2, stepped * 2.0);
+      } else {
+        // Interpolate between Midtone (Color2) and Highlight (Color3)
+        finalColor = mix(uColor2, uColor3, (stepped - 0.5) * 2.0);
+      }
     }
 
     // 4. Sobel Edge Detection (for Coloring Book mode)
@@ -123,7 +141,10 @@ export class PosterizationMaterial extends THREE.ShaderMaterial {
         uEdgeOnly: { value: 0.0 },
         uEdgeThreshold: { value: 0.15 },
         uAberration: { value: 0.0 },
-        uResolution: { value: new THREE.Vector2(1, 1) }
+        uResolution: { value: new THREE.Vector2(1, 1) },
+        uThreeTone: { value: 1.0 },
+        uShadowThresh: { value: 0.33 },
+        uHighlightThresh: { value: 0.66 }
       },
       vertexShader,
       fragmentShader
@@ -135,6 +156,9 @@ export class PosterizationMaterial extends THREE.ShaderMaterial {
   set edgeOnly(v: boolean) { this.uniforms.uEdgeOnly.value = v ? 1.0 : 0.0; }
   set edgeThreshold(v: number) { this.uniforms.uEdgeThreshold.value = v; }
   set aberration(v: number) { this.uniforms.uAberration.value = v; }
+  set threeTone(v: boolean) { this.uniforms.uThreeTone.value = v ? 1.0 : 0.0; }
+  set shadowThreshold(v: number) { this.uniforms.uShadowThresh.value = v; }
+  set highlightThreshold(v: number) { this.uniforms.uHighlightThresh.value = v; }
   
   setPalette(c1: string, c2: string, c3: string) {
     this.uniforms.uColor1.value.set(c1);
