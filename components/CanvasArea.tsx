@@ -255,42 +255,61 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
 
   // Handle Video/Webcam Source
   useEffect(() => {
-    if (state.isVideo) {
-      // Create hidden video element
-      const video = document.createElement('video');
-      video.autoplay = true;
-      video.muted = true;
-      video.playsInline = true;
-      videoElementRef.current = video;
+    if (!state.isVideo) return;
 
-      // Open the requested camera. facingMode is a soft constraint, so devices
-      // with a single camera (most laptops) simply use what they have; phones
-      // honour it so the flip button can swap between front and rear cameras.
-      navigator.mediaDevices.getUserMedia({ video: { facingMode } }).then(stream => {
-        video.srcObject = stream;
-        video.play();
-        
-        const tex = new THREE.VideoTexture(video);
-        tex.minFilter = THREE.LinearFilter;
-        tex.magFilter = THREE.LinearFilter;
-        textureRef.current = tex;
-        materialRef.current?.setTexture(tex);
-        // Plane aspect will be updated in loop or we wait for metadata
-        video.addEventListener('loadedmetadata', () => {
-          updatePlaneAspect();
-          if (video.videoWidth && video.videoHeight) {
-            onImageLoaded?.(video.videoWidth / video.videoHeight);
-          }
-        });
-      }).catch(err => console.error("Webcam error:", err));
+    // Create hidden video element
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+    videoElementRef.current = video;
 
-      return () => {
-        if (video.srcObject) {
-          const tracks = (video.srcObject as MediaStream).getTracks();
-          tracks.forEach(track => track.stop());
+    // Guards against a race when the effect is torn down (unmount, camera off,
+    // or a fast facingMode flip) BEFORE getUserMedia resolves: the stream would
+    // otherwise arrive after cleanup and keep the camera on. We track the stream
+    // in a closure var and a cancelled flag so cleanup can always stop it.
+    let cancelled = false;
+    let stream: MediaStream | null = null;
+
+    // Open the requested camera. facingMode is a soft constraint, so devices
+    // with a single camera (most laptops) simply use what they have; phones
+    // honour it so the flip button can swap between front and rear cameras.
+    navigator.mediaDevices.getUserMedia({ video: { facingMode } }).then((s) => {
+      stream = s;
+      if (cancelled) {
+        // We already cleaned up — this stream is orphaned. Stop it immediately
+        // so the camera indicator turns off and we don't leak a second camera.
+        s.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      video.srcObject = s;
+      // play() can reject with an AbortError when the source is swapped quickly
+      // (e.g. a fast camera flip). It's harmless here (muted autoplay), so we
+      // swallow it rather than let it surface as an unhandled promise rejection.
+      video.play().catch(() => {});
+
+      const tex = new THREE.VideoTexture(video);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      textureRef.current = tex;
+      materialRef.current?.setTexture(tex);
+      // Plane aspect will be updated in loop or we wait for metadata
+      video.addEventListener('loadedmetadata', () => {
+        updatePlaneAspect();
+        if (video.videoWidth && video.videoHeight) {
+          onImageLoaded?.(video.videoWidth / video.videoHeight);
         }
-      };
-    }
+      });
+    }).catch((err) => console.error('Webcam error:', err));
+
+    return () => {
+      cancelled = true;
+      // Stop whichever stream exists: the one on the element, or one that
+      // resolved into the closure (covers the resolve-after-cleanup race).
+      const active = (video.srcObject as MediaStream | null) || stream;
+      active?.getTracks().forEach((t) => t.stop());
+      video.srcObject = null;
+    };
     // Re-runs when facingMode changes too: the cleanup stops the old camera's
     // tracks and this effect reopens the stream on the newly selected camera.
   }, [state.isVideo, facingMode]);
