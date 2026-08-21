@@ -199,12 +199,18 @@ const App: React.FC = () => {
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       containerRef.current?.requestFullscreen();
-      setIsFullscreen(true);
     } else {
       document.exitFullscreen();
-      setIsFullscreen(false);
     }
+    // `isFullscreen` is synced by the fullscreenchange listener below rather than
+    // set optimistically here, so exiting via the Esc key keeps the icon correct.
   };
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
 
   const randomizeSettings = () => {
     const randomPalette = PALETTES[Math.floor(Math.random() * PALETTES.length)];

@@ -79,10 +79,13 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
 
     // Animation Loop
     const animate = () => {
-      if (state.isVideo && textureRef.current && videoElementRef.current) {
-        if (videoElementRef.current.readyState >= videoElementRef.current.HAVE_CURRENT_DATA) {
-          textureRef.current.needsUpdate = true;
-        }
+      // Keep the live camera/video feed flowing. We detect the video texture by
+      // type rather than reading `state.isVideo` here: this closure is created
+      // once on mount, so `state.isVideo` would be permanently stale (false).
+      const tex = textureRef.current as THREE.VideoTexture | null;
+      const video = videoElementRef.current;
+      if (tex?.isVideoTexture && video && video.readyState >= video.HAVE_CURRENT_DATA) {
+        tex.needsUpdate = true;
       }
       renderer.render(scene, camera);
       requestRef.current = requestAnimationFrame(animate);
@@ -155,8 +158,17 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
   // Helper to adjust plane scale to match image aspect ratio within container
   const updatePlaneAspect = () => {
     if (!textureRef.current || !planeRef.current || !cameraRef.current || !containerRef.current) return;
-    
-    const imageAspect = textureRef.current.image.width / textureRef.current.image.height;
+
+    // Read the source's intrinsic size. A `<video>` element (camera / Selfie
+    // Station) exposes its size as videoWidth/videoHeight — its `.width`/`.height`
+    // are the (usually unset, i.e. 0) HTML attributes. Falling back to those
+    // would make the aspect NaN and collapse the plane, so prefer the real dims.
+    const src = textureRef.current.image as HTMLImageElement & HTMLVideoElement;
+    const iw = src.naturalWidth || src.videoWidth || src.width || 0;
+    const ih = src.naturalHeight || src.videoHeight || src.height || 0;
+    if (!iw || !ih) return; // Not ready yet — avoid setting a NaN scale.
+
+    const imageAspect = iw / ih;
     const containerAspect = containerRef.current.clientWidth / containerRef.current.clientHeight;
     
     // Fit 'contain' logic for the plane
