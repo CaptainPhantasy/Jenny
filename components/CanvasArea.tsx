@@ -6,6 +6,9 @@ import { PosterizationMaterial } from '../webgl/PosterizationMaterial';
 /** Signature of the imperative export function exposed to the parent. */
 export type ExportFn = () => Promise<Blob | null>;
 
+/** Grabs the current camera frame as a still image data URI (or null). */
+export type CaptureFn = () => string | null;
+
 interface CanvasAreaProps {
   state: AppState;
   activePalette: Palette;
@@ -13,11 +16,13 @@ interface CanvasAreaProps {
   onImageLoaded?: (aspect: number) => void;
   /** Parent-owned ref that receives a function to render a high-res PNG blob. */
   exportApiRef?: React.MutableRefObject<ExportFn | null>;
+  /** Parent-owned ref that receives a function to snap a still from the camera. */
+  captureApiRef?: React.MutableRefObject<CaptureFn | null>;
   /** Called when the user right-clicks / long-presses the canvas to save. */
   onRequestSave?: () => void;
 }
 
-export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, onCanvasReady, onImageLoaded, exportApiRef, onRequestSave }) => {
+export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, onCanvasReady, onImageLoaded, exportApiRef, captureApiRef, onRequestSave }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const materialRef = useRef<PosterizationMaterial | null>(null);
@@ -256,7 +261,10 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
       video.playsInline = true;
       videoElementRef.current = video;
 
-      navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+      // Prefer the front ("user") camera so the Selfie Station points at the
+      // student, not away from them. facingMode is a soft constraint, so devices
+      // with a single camera (most laptops) simply use what they have.
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } }).then(stream => {
         video.srcObject = stream;
         video.play();
         
@@ -414,13 +422,30 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
     return await new Promise<Blob | null>((resolve) => out.toBlob((b) => resolve(b), 'image/png'));
   };
 
-  // Keep the parent's ref pointed at the freshest closure (captures latest state),
-  // and clear it when this component unmounts to avoid dangling references.
+  // Snap the current live camera frame into a still image. We capture the RAW
+  // video frame (not the shader result) so the still stays fully editable — the
+  // poster/palette effect is re-applied live once it loads back in as an image.
+  const captureStill: CaptureFn = () => {
+    const video = videoElementRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) return null;
+    const c = document.createElement('canvas');
+    c.width = video.videoWidth;
+    c.height = video.videoHeight;
+    const ctx = c.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  };
+
+  // Keep the parent's refs pointed at the freshest closures (captures latest
+  // state), and clear them on unmount to avoid dangling references.
   useEffect(() => {
-    if (exportApiRef) {
-      exportApiRef.current = doExport;
-      return () => { exportApiRef.current = null; };
-    }
+    if (exportApiRef) exportApiRef.current = doExport;
+    if (captureApiRef) captureApiRef.current = captureStill;
+    return () => {
+      if (exportApiRef) exportApiRef.current = null;
+      if (captureApiRef) captureApiRef.current = null;
+    };
   });
 
   return (

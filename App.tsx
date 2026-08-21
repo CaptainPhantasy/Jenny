@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Controls } from './components/Controls';
-import { CanvasArea, ExportFn } from './components/CanvasArea';
+import { CanvasArea, ExportFn, CaptureFn } from './components/CanvasArea';
 import { GridOverlay } from './components/GridOverlay';
 import { Tooltip } from './components/Tooltip';
 import { AppState, DEFAULT_IMAGE, Palette } from './types';
@@ -43,6 +43,8 @@ const App: React.FC = () => {
 
   // Imperative handle to the high-fidelity export function owned by CanvasArea.
   const exportRef = useRef<ExportFn | null>(null);
+  // Imperative handle to snap a still frame from the live camera.
+  const captureRef = useRef<CaptureFn | null>(null);
 
   // Responsive layout state. On small screens the control panel becomes a
   // slide-in drawer; on md+ it is docked. `mobileOpen` tracks the drawer.
@@ -90,6 +92,16 @@ const App: React.FC = () => {
 
   const handleCamera = () => {
     setState(prev => ({ ...prev, isVideo: true, imageSrc: null }));
+  };
+
+  // Take the photo: freeze the current camera frame into a still and load it as
+  // the editable image, then turn the camera off. If the frame isn't ready yet
+  // we simply leave the camera running so the student can try again.
+  const handleTakePhoto = () => {
+    const uri = captureRef.current?.();
+    if (uri) {
+      setState(prev => ({ ...prev, imageSrc: uri, isVideo: false }));
+    }
   };
 
   // Produce the high-res, WYSIWYG PNG blob from the offscreen export pipeline.
@@ -393,8 +405,25 @@ const App: React.FC = () => {
               onCanvasReady={setCanvasRef}
               onImageLoaded={setImageAspect}
               exportApiRef={exportRef}
+              captureApiRef={captureRef}
               onRequestSave={handleExportAndSave}
             />
+
+            {/* Camera shutter — only while the live camera is running. Freezes
+                the current frame into an editable still photo. */}
+            {state.isVideo && (
+              <div className="absolute inset-x-0 bottom-0 flex justify-center pb-[max(1.25rem,env(safe-area-inset-bottom))] z-20 pointer-events-none">
+                <button
+                  onClick={handleTakePhoto}
+                  className="pointer-events-auto flex items-center gap-2 px-6 py-3 rounded-full bg-white text-slate-900 font-bold shadow-2xl ring-4 ring-white/30 hover:scale-105 active:scale-95 transition-transform"
+                  title="Take photo"
+                  aria-label="Take photo"
+                >
+                  <span className="inline-block w-5 h-5 rounded-full border-4 border-slate-900" />
+                  Take Photo
+                </button>
+              </div>
+            )}
 
             {/* Tooltip Popup */}
             <Tooltip
