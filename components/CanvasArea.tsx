@@ -30,6 +30,14 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
   const textureRef = useRef<THREE.Texture | null>(null);
   const requestRef = useRef<number>();
 
+  // Cached offscreen export renderer (reused across saves to avoid WebGL context churn).
+  const exRendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const exSceneRef = useRef<THREE.Scene | null>(null);
+  const exCamRef = useRef<THREE.OrthographicCamera | null>(null);
+  const exMatRef = useRef<PosterizationMaterial | null>(null);
+  const exGeoRef = useRef<THREE.BufferGeometry | null>(null);
+  const exMeshRef = useRef<THREE.Mesh | null>(null);
+
   // Init Three.js
   useEffect(() => {
     if (!containerRef.current) return;
@@ -130,6 +138,16 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
       // (rather than parent.removeChild) is robust even if the container ref has
       // changed, guaranteeing no orphaned canvas survives a StrictMode re-mount.
       canvasEl.remove();
+      // Dispose cached offscreen export resources.
+      exRendererRef.current?.dispose();
+      exGeoRef.current?.dispose();
+      if (exMatRef.current) (exMatRef.current as THREE.Material).dispose();
+      exRendererRef.current = null;
+      exSceneRef.current = null;
+      exCamRef.current = null;
+      exMatRef.current = null;
+      exGeoRef.current = null;
+      exMeshRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run once on mount
@@ -264,8 +282,8 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
     if (!tex || !tex.image) return null;
 
     const img = tex.image as HTMLImageElement & HTMLVideoElement;
-    const imgW = img.width || img.videoWidth || 0;
-    const imgH = img.height || img.videoHeight || 0;
+    const imgW = (img as HTMLImageElement).naturalWidth || (img as HTMLVideoElement).videoWidth || 0;
+    const imgH = (img as HTMLImageElement).naturalHeight || (img as HTMLVideoElement).videoHeight || 0;
     if (!imgW || !imgH) return null;
 
     // Cap the longest edge so huge photos don't blow the GPU/memory budget,
@@ -275,19 +293,31 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
     const outW = Math.max(1, Math.round(imgW * fit));
     const outH = Math.max(1, Math.round(imgH * fit));
 
-    // Dedicated offscreen renderer at native resolution.
-    const exRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-    exRenderer.setPixelRatio(1);
+    // Reuse (or lazily create) the cached offscreen renderer to avoid hitting
+    // browser WebGL context limits on repeated exports.
+    if (!exRendererRef.current) {
+      const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+      r.setPixelRatio(1);
+      if (rendererRef.current) r.outputColorSpace = rendererRef.current.outputColorSpace;
+      exRendererRef.current = r;
+    }
+    const exRenderer = exRendererRef.current;
     exRenderer.setSize(outW, outH, false);
-    if (rendererRef.current) exRenderer.outputColorSpace = rendererRef.current.outputColorSpace;
 
-    const exScene = new THREE.Scene();
-    // Full-frame quad: the framebuffer aspect equals the image aspect, so the
-    // image fills the whole frame — no letterboxing, no background bars.
-    const exCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-    exCam.position.z = 1;
+    if (!exSceneRef.current) exSceneRef.current = new THREE.Scene();
+    const exScene = exSceneRef.current;
 
-    const exMat = new PosterizationMaterial();
+    if (!exCamRef.current) {
+      // Full-frame quad: the framebuffer aspect equals the image aspect, so the
+      // image fills the whole frame — no letterboxing, no background bars.
+      const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+      cam.position.z = 1;
+      exCamRef.current = cam;
+    }
+    const exCam = exCamRef.current;
+
+    if (!exMatRef.current) exMatRef.current = new PosterizationMaterial();
+    const exMat = exMatRef.current;
     // Mirror every live uniform so the export matches the screen exactly.
     exMat.steps = state.steps;
     exMat.pixelSize = state.pixelation;
@@ -305,10 +335,15 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
     exMat.setTexture(tex);
     exMat.setResolution(outW, outH);
 
-    const exGeo = new THREE.PlaneGeometry(2, 2);
-    const exMesh = new THREE.Mesh(exGeo, exMat);
+    if (!exGeoRef.current) exGeoRef.current = new THREE.PlaneGeometry(2, 2);
+    const exGeo = exGeoRef.current;
+
+    if (!exMeshRef.current) {
+      exMeshRef.current = new THREE.Mesh(exGeo, exMat);
+      exScene.add(exMeshRef.current);
+    }
+    const exMesh = exMeshRef.current;
     exMesh.scale.set(state.flipX ? -1 : 1, state.flipY ? -1 : 1, 1);
-    exScene.add(exMesh);
 
     exRenderer.render(exScene, exCam);
 
@@ -317,7 +352,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
     out.width = outW;
     out.height = outH;
     const ctx = out.getContext('2d');
-    if (!ctx) { exRenderer.dispose(); exGeo.dispose(); (exMat as THREE.Material).dispose(); return null; }
+    if (!ctx) { return null; }
     ctx.drawImage(exRenderer.domElement, 0, 0, outW, outH);
 
     // Draw the inch grid to match what's visible on screen. We reproduce the
@@ -364,16 +399,17 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
       ctx.fillText(label, fontPx * 0.4 + padX, fontPx * 0.4 + fontPx * 0.85);
     }
 
-    // Clean up GPU resources for this one-shot render.
-    exRenderer.dispose();
-    exGeo.dispose();
-    (exMat as THREE.Material).dispose();
-
     return await new Promise<Blob | null>((resolve) => out.toBlob((b) => resolve(b), 'image/png'));
   };
 
-  // Keep the parent's ref pointed at the freshest closure (captures latest state).
-  if (exportApiRef) exportApiRef.current = doExport;
+  // Keep the parent's ref pointed at the freshest closure (captures latest state),
+  // and clear it when this component unmounts to avoid dangling references.
+  useEffect(() => {
+    if (exportApiRef) {
+      exportApiRef.current = doExport;
+      return () => { exportApiRef.current = null; };
+    }
+  });
 
   return (
     <div

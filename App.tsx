@@ -60,6 +60,12 @@ const App: React.FC = () => {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
+  // Close the mobile drawer whenever the viewport grows to desktop width so
+  // state stays consistent (avoids the drawer reopening on mobile→desktop→mobile).
+  useEffect(() => {
+    if (isDesktop) setMobileOpen(false);
+  }, [isDesktop]);
+
   // Derived active palette. When 'custom' is selected we build a palette from the
   // user-chosen colors so they can pick their own Dark / Midtone / Light.
   const activePalette = useMemo<Palette>(() => {
