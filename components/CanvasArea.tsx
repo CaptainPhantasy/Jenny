@@ -14,6 +14,8 @@ interface CanvasAreaProps {
   activePalette: Palette;
   onCanvasReady: (canvas: HTMLCanvasElement) => void;
   onImageLoaded?: (aspect: number) => void;
+  /** Which camera to open: 'user' (front / selfie) or 'environment' (rear). */
+  facingMode?: 'user' | 'environment';
   /** Parent-owned ref that receives a function to render a high-res PNG blob. */
   exportApiRef?: React.MutableRefObject<ExportFn | null>;
   /** Parent-owned ref that receives a function to snap a still from the camera. */
@@ -22,7 +24,7 @@ interface CanvasAreaProps {
   onRequestSave?: () => void;
 }
 
-export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, onCanvasReady, onImageLoaded, exportApiRef, captureApiRef, onRequestSave }) => {
+export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, onCanvasReady, onImageLoaded, facingMode = 'user', exportApiRef, captureApiRef, onRequestSave }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const materialRef = useRef<PosterizationMaterial | null>(null);
@@ -261,10 +263,10 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
       video.playsInline = true;
       videoElementRef.current = video;
 
-      // Prefer the front ("user") camera so the Selfie Station points at the
-      // student, not away from them. facingMode is a soft constraint, so devices
-      // with a single camera (most laptops) simply use what they have.
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } }).then(stream => {
+      // Open the requested camera. facingMode is a soft constraint, so devices
+      // with a single camera (most laptops) simply use what they have; phones
+      // honour it so the flip button can swap between front and rear cameras.
+      navigator.mediaDevices.getUserMedia({ video: { facingMode } }).then(stream => {
         video.srcObject = stream;
         video.play();
         
@@ -289,7 +291,9 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
         }
       };
     }
-  }, [state.isVideo]);
+    // Re-runs when facingMode changes too: the cleanup stops the old camera's
+    // tracks and this effect reopens the stream on the newly selected camera.
+  }, [state.isVideo, facingMode]);
 
   // --- High-fidelity export -------------------------------------------------
   // Renders the CURRENT look into an offscreen buffer at the SOURCE image's

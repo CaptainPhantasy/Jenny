@@ -7,7 +7,7 @@ import { AppState, DEFAULT_IMAGE, Palette } from './types';
 import { PALETTES } from './constants';
 import { fileToDataUri } from './services/imageService';
 import { useHistory } from './components/HistoryHook';
-import { Maximize, Minimize, Copy, Code, EyeOff, Undo, Redo, Shuffle, Settings2, Menu, Download } from 'lucide-react';
+import { Maximize, Minimize, Copy, Code, EyeOff, Undo, Redo, Shuffle, Settings2, Menu, Download, SwitchCamera } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const INITIAL_STATE: AppState = {
@@ -45,6 +45,9 @@ const App: React.FC = () => {
   const exportRef = useRef<ExportFn | null>(null);
   // Imperative handle to snap a still frame from the live camera.
   const captureRef = useRef<CaptureFn | null>(null);
+  // Which camera the live feed uses. Not part of undo history — it's a device
+  // choice, not an edit. Defaults to the front camera for selfies.
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
 
   // Responsive layout state. On small screens the control panel becomes a
   // slide-in drawer; on md+ it is docked. `mobileOpen` tracks the drawer.
@@ -406,13 +409,15 @@ const App: React.FC = () => {
               onImageLoaded={setImageAspect}
               exportApiRef={exportRef}
               captureApiRef={captureRef}
+              facingMode={facingMode}
               onRequestSave={handleExportAndSave}
             />
 
-            {/* Camera shutter — only while the live camera is running. Freezes
-                the current frame into an editable still photo. */}
+            {/* Camera controls — only while the live camera is running. The
+                shutter freezes the current frame into an editable still; the
+                flip button swaps between front and rear cameras. */}
             {state.isVideo && (
-              <div className="absolute inset-x-0 bottom-0 flex justify-center pb-[max(1.25rem,env(safe-area-inset-bottom))] z-20 pointer-events-none">
+              <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] z-20 pointer-events-none">
                 <button
                   onClick={handleTakePhoto}
                   className="pointer-events-auto flex items-center gap-2 px-6 py-3 rounded-full bg-white text-slate-900 font-bold shadow-2xl ring-4 ring-white/30 hover:scale-105 active:scale-95 transition-transform"
@@ -421,6 +426,14 @@ const App: React.FC = () => {
                 >
                   <span className="inline-block w-5 h-5 rounded-full border-4 border-slate-900" />
                   Take Photo
+                </button>
+                <button
+                  onClick={() => setFacingMode(f => (f === 'user' ? 'environment' : 'user'))}
+                  className="pointer-events-auto p-3 rounded-full bg-slate-900/70 text-white shadow-2xl ring-2 ring-white/30 hover:bg-slate-800 hover:scale-105 active:scale-95 transition-all backdrop-blur-sm"
+                  title="Switch camera (front/back)"
+                  aria-label="Switch camera"
+                >
+                  <SwitchCamera className="w-6 h-6" />
                 </button>
               </div>
             )}
