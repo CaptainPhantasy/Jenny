@@ -2,19 +2,42 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Miss Day’s Art Class Posterization App</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        /* Dynamic viewport height keeps the layout correct as mobile browser
+           chrome (address bar) shows/hides, with a static fallback. */
+        height: 100vh;
+        height: 100dvh;
+        width: 100%;
+        overflow: hidden;
+        overscroll-behavior: none;
+        -webkit-text-size-adjust: 100%;
+      }
       body {
         font-family: 'Plus Jakarta Sans', sans-serif;
         background-color: #0f172a;
         color: #e2e8f0;
-        margin: 0;
-        overflow: hidden;
+        /* Prevent iOS rubber-band scroll from revealing white behind the app. */
+        position: fixed;
+        inset: 0;
+        touch-action: manipulation;
+      }
+      #root {
+        height: 100vh;
+        height: 100dvh;
+        width: 100vw;
       }
       /* Custom Scrollbar for the sidebar */
       ::-webkit-scrollbar {
