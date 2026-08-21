@@ -1,13 +1,13 @@
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Controls } from './components/Controls';
-import { CanvasArea } from './components/CanvasArea';
+import { CanvasArea, ExportFn } from './components/CanvasArea';
 import { GridOverlay } from './components/GridOverlay';
 import { Tooltip } from './components/Tooltip';
 import { AppState, DEFAULT_IMAGE, Palette } from './types';
 import { PALETTES } from './constants';
 import { fileToDataUri } from './services/imageService';
 import { useHistory } from './components/HistoryHook';
-import { Maximize, Minimize, Copy, Image as ImageIcon, Code, EyeOff, Undo, Redo, Shuffle, Settings2 } from 'lucide-react';
+import { Maximize, Minimize, Copy, Code, EyeOff, Undo, Redo, Shuffle, Settings2, Menu, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const INITIAL_STATE: AppState = {
@@ -41,6 +41,25 @@ const App: React.FC = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [imageAspect, setImageAspect] = useState<number | null>(null);
 
+  // Imperative handle to the high-fidelity export function owned by CanvasArea.
+  const exportRef = useRef<ExportFn | null>(null);
+
+  // Responsive layout state. On small screens the control panel becomes a
+  // slide-in drawer; on md+ it is docked. `mobileOpen` tracks the drawer.
+  const [isDesktop, setIsDesktop] = useState(
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : true
+  );
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = () => setIsDesktop(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
   // Derived active palette. When 'custom' is selected we build a palette from the
   // user-chosen colors so they can pick their own Dark / Midtone / Light.
   const activePalette = useMemo<Palette>(() => {
@@ -67,45 +86,107 @@ const App: React.FC = () => {
     setState(prev => ({ ...prev, isVideo: true, imageSrc: null }));
   };
 
-  const handleDownloadPNG = () => {
+  // Produce the high-res, WYSIWYG PNG blob from the offscreen export pipeline.
+  // Falls back to the on-screen canvas only if the export API is unavailable.
+  const getArtBlob = async (): Promise<Blob | null> => {
+    if (exportRef.current) {
+      try {
+        const blob = await exportRef.current();
+        if (blob) return blob;
+      } catch (err) {
+        console.error('High-res export failed, falling back to canvas', err);
+      }
+    }
     if (canvasRef) {
+      return await new Promise<Blob | null>((resolve) =>
+        canvasRef.toBlob((b) => resolve(b), 'image/png')
+      );
+    }
+    return null;
+  };
+
+  // Bulletproof multi-device save. Uses the Web Share API (native share sheet /
+  // "Save Image" → Camera Roll or Files) when the device supports sharing files;
+  // otherwise falls back to an object-URL download link. Works on iOS/Android
+  // Safari & Chrome as well as desktop browsers.
+  const handleExportAndSave = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      const blob = await getArtBlob();
+      if (!blob) {
+        alert('Could not generate the image. Please load an image first.');
+        return;
+      }
+      const fileName = 'art-project.png';
+      const file = new File([blob], fileName, { type: 'image/png' });
+
+      // Prefer the native share sheet on capable (mostly mobile) devices.
+      const nav = navigator as Navigator & {
+        canShare?: (data?: ShareData) => boolean;
+        share?: (data?: ShareData) => Promise<void>;
+      };
+      if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
+        try {
+          await nav.share({ files: [file], title: 'My Poster Art' });
+          return;
+        } catch (err) {
+          // User cancelled or share failed — fall through to download.
+          if ((err as DOMException)?.name === 'AbortError') return;
+          console.warn('Share failed, falling back to download', err);
+        }
+      }
+
+      // Universal download fallback.
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.download = `posterized-art-${Date.now()}.png`;
-      link.href = canvasRef.toDataURL('image/png', 1.0);
+      link.download = fileName;
+      link.href = url;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleDownloadSVG = () => {
-    if (canvasRef) {
-      const dataUrl = canvasRef.toDataURL('image/png', 1.0);
-      const svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasRef.width}" height="${canvasRef.height}">
-        <image href="${dataUrl}" width="${canvasRef.width}" height="${canvasRef.height}" />
-      </svg>`;
-      const blob = new Blob([svgString], { type: 'image/svg+xml' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.download = `posterized-art-${Date.now()}.svg`;
-      link.href = url;
-      link.click();
-      URL.revokeObjectURL(url);
-    }
+  const handleDownloadSVG = async () => {
+    const blob = await getArtBlob();
+    if (!blob) return;
+    const dataUrl = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+    // Recover the PNG's intrinsic size so the SVG wrapper matches it exactly.
+    const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+      const im = new Image();
+      im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+      im.onerror = () => resolve({ w: 1024, h: 1024 });
+      im.src = dataUrl;
+    });
+    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="${dims.w}" height="${dims.h}">
+      <image href="${dataUrl}" width="${dims.w}" height="${dims.h}" />
+    </svg>`;
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(svgBlob);
+    const link = document.createElement('a');
+    link.download = 'art-project.svg';
+    link.href = url;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const handleCopyClipboard = async () => {
-    if (canvasRef) {
-      canvasRef.toBlob(async (blob) => {
-        if (blob) {
-          try {
-            await navigator.clipboard.write([
-              new ClipboardItem({ 'image/png': blob })
-            ]);
-            alert('Copied to clipboard!');
-          } catch (err) {
-            console.error('Failed to copy', err);
-          }
-        }
-      });
+    const blob = await getArtBlob();
+    if (!blob) return;
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      alert('Copied to clipboard!');
+    } catch (err) {
+      console.error('Failed to copy', err);
     }
   };
 
@@ -176,90 +257,136 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [state.activePaletteId]);
 
+  // The docked sidebar shows on desktop (md+) unless Zen mode; on mobile it is a
+  // slide-in drawer toggled by the hamburger. Close the drawer whenever we grow
+  // to a desktop width so state stays consistent.
+  const sidebarVisible = !state.zenMode && (isDesktop || mobileOpen);
+
   return (
-    <div ref={containerRef} className="flex h-screen w-screen bg-[#0f172a] overflow-hidden">
-      {/* Sidebar Controls */}
+    <div
+      ref={containerRef}
+      className="flex h-[100dvh] w-[100vw] bg-[#0f172a] overflow-hidden relative"
+    >
+      {/* Mobile drawer backdrop */}
       <AnimatePresence>
-        {!state.zenMode && (
-          <motion.div 
-            initial={{ x: -320 }} 
-            animate={{ x: 0 }} 
-            exit={{ x: -320 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="w-80 h-full shrink-0 z-20 shadow-2xl absolute md:relative"
+        {mobileOpen && !isDesktop && !state.zenMode && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setMobileOpen(false)}
+            className="fixed inset-0 bg-black/60 z-30 md:hidden"
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Sidebar Controls (docked on desktop, drawer on mobile) */}
+      <AnimatePresence>
+        {sidebarVisible && (
+          <motion.div
+            initial={{ x: -340 }}
+            animate={{ x: 0 }}
+            exit={{ x: -340 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 240 }}
+            className="w-[85vw] max-w-xs md:w-80 h-full shrink-0 z-40 shadow-2xl fixed md:relative left-0 top-0 pb-[env(safe-area-inset-bottom)]"
           >
-            <Controls 
-              state={state} 
-              setState={setState} 
+            <Controls
+              state={state}
+              setState={setState}
               onUpload={handleUpload}
               onCamera={handleCamera}
-              onDownload={handleDownloadPNG}
+              onDownload={handleExportAndSave}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Main Content Area */}
-      <div className="flex-1 relative h-full flex flex-col w-full">
-        
-        {/* Top Bar / Canvas Header */}
-        <div className="h-16 bg-slate-900/50 backdrop-blur-md border-b border-slate-700 flex items-center justify-between px-6 z-10 w-full shrink-0">
-            <div className="flex items-center gap-4">
-               {state.zenMode && (
-                 <button onClick={() => setState(prev => ({...prev, zenMode: false}))} className="text-slate-400 hover:text-white mr-2">
-                   <Settings2 className="w-5 h-5" />
-                 </button>
-               )}
-               <div className="h-8 w-8 rounded bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center font-bold text-white shadow-lg shadow-violet-500/20">
-                 P
-               </div>
-               <span className="text-slate-200 font-medium hidden sm:inline">{activePalette.name}</span>
-            </div>
-            
-            <div className="flex items-center gap-2">
-               {/* Undo / Redo */}
-               <div className="flex items-center bg-slate-800 rounded-lg p-1 mr-2 border border-slate-700">
-                 <button onClick={undo} disabled={!canUndo} className="p-1.5 rounded-md hover:bg-slate-700 disabled:opacity-30 transition-colors text-slate-300" title="Undo (Ctrl+Z)">
-                    <Undo className="w-4 h-4" />
-                 </button>
-                 <button onClick={redo} disabled={!canRedo} className="p-1.5 rounded-md hover:bg-slate-700 disabled:opacity-30 transition-colors text-slate-300" title="Redo (Ctrl+Y)">
-                    <Redo className="w-4 h-4" />
-                 </button>
-               </div>
+      <div className="flex-1 relative h-full flex flex-col w-full min-w-0">
 
-               {/* Quick Actions */}
-               <button onClick={randomizeSettings} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors hidden sm:block" title="Randomize (R)">
-                 <Shuffle className="w-4 h-4" />
+        {/* Top Bar / Canvas Header */}
+        <div className="shrink-0 bg-slate-900/50 backdrop-blur-md border-b border-slate-700 flex items-center justify-between gap-2 z-10 w-full pt-[env(safe-area-inset-top)] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">
+          <div className="flex items-center gap-2 sm:gap-4 h-16 min-w-0">
+             {/* Mobile hamburger to open the controls drawer */}
+             {!state.zenMode && (
+               <button
+                 onClick={() => setMobileOpen(true)}
+                 className="md:hidden p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors shrink-0"
+                 title="Open controls"
+                 aria-label="Open controls"
+               >
+                 <Menu className="w-5 h-5" />
                </button>
-               <button onClick={handleCopyClipboard} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors hidden sm:block" title="Copy to Clipboard (Ctrl+C)">
-                 <Copy className="w-4 h-4" />
+             )}
+             {state.zenMode && (
+               <button onClick={() => setState(prev => ({...prev, zenMode: false}))} className="text-slate-400 hover:text-white mr-1 shrink-0" title="Exit Zen mode">
+                 <Settings2 className="w-5 h-5" />
                </button>
-               <button onClick={handleDownloadSVG} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors" title="Export as SVG">
-                 <Code className="w-4 h-4" />
+             )}
+             <div className="h-8 w-8 rounded bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center font-bold text-white shadow-lg shadow-violet-500/20 shrink-0">
+               P
+             </div>
+             <span className="text-slate-200 font-medium truncate hidden sm:inline">{activePalette.name}</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 sm:gap-2 h-16 shrink-0">
+             {/* Undo / Redo */}
+             <div className="flex items-center bg-slate-800 rounded-lg p-1 border border-slate-700">
+               <button onClick={undo} disabled={!canUndo} className="p-1.5 rounded-md hover:bg-slate-700 disabled:opacity-30 transition-colors text-slate-300" title="Undo (Ctrl+Z)">
+                  <Undo className="w-4 h-4" />
                </button>
-               <button onClick={() => setState(prev => ({...prev, zenMode: !prev.zenMode}))} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors" title="Zen Mode (H)">
-                 <EyeOff className="w-4 h-4" />
+               <button onClick={redo} disabled={!canRedo} className="p-1.5 rounded-md hover:bg-slate-700 disabled:opacity-30 transition-colors text-slate-300" title="Redo (Ctrl+Y)">
+                  <Redo className="w-4 h-4" />
                </button>
-               <button onClick={toggleFullscreen} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors hidden sm:block" title="Fullscreen">
-                 {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-               </button>
-            </div>
+             </div>
+
+             {/* Quick Actions (desktop) */}
+             <button onClick={randomizeSettings} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors hidden sm:block" title="Randomize (R)">
+               <Shuffle className="w-4 h-4" />
+             </button>
+             <button onClick={handleCopyClipboard} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors hidden sm:block" title="Copy to Clipboard (Ctrl+C)">
+               <Copy className="w-4 h-4" />
+             </button>
+             <button onClick={handleDownloadSVG} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors hidden sm:block" title="Export as SVG">
+               <Code className="w-4 h-4" />
+             </button>
+
+             {/* Mobile save button — always reachable without opening the drawer */}
+             <button
+               onClick={handleExportAndSave}
+               disabled={isSaving}
+               className="md:hidden p-2 rounded-lg bg-gradient-to-br from-violet-500 to-cyan-500 text-white shadow-lg shadow-violet-500/20 disabled:opacity-50 transition-colors"
+               title="Save / Share art"
+               aria-label="Save art"
+             >
+               <Download className="w-5 h-5" />
+             </button>
+
+             <button onClick={() => setState(prev => ({...prev, zenMode: !prev.zenMode}))} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors" title="Zen Mode (H)">
+               <EyeOff className="w-4 h-4" />
+             </button>
+             <button onClick={toggleFullscreen} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors hidden sm:block" title="Fullscreen">
+               {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+             </button>
+          </div>
         </div>
 
-        {/* Canvas Container */}
-        <div className="flex-1 relative bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')]">
+        {/* Canvas Container — fills remaining height, centers & contains the art */}
+        <div className="flex-1 relative min-h-0 overflow-hidden bg-slate-900">
             <GridOverlay inches={state.gridSize} imageAspect={imageAspect} />
-            
-            <CanvasArea 
-              state={state} 
+
+            <CanvasArea
+              state={state}
               activePalette={activePalette}
               onCanvasReady={setCanvasRef}
               onImageLoaded={setImageAspect}
+              exportApiRef={exportRef}
+              onRequestSave={handleExportAndSave}
             />
 
             {/* Tooltip Popup */}
-            <Tooltip 
-              visible={showTooltip} 
+            <Tooltip
+              visible={showTooltip}
               content={activePalette.description}
               onClose={() => setShowTooltip(false)}
             />
