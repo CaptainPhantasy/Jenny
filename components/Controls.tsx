@@ -2,6 +2,8 @@ import React, { useRef } from 'react';
 import { Upload, Camera, Download, Grid3X3, Palette as PaletteIcon, Eraser, FileDigit, Sliders, RefreshCcw, Maximize, Scan, Layers } from 'lucide-react';
 import { Palette, AppState } from '../types';
 import { PALETTES, PRESETS, Preset } from '../constants';
+import { resToGlitchPercent, glitchPercentToRes } from '../lib/glitch';
+import { clampShadowThreshold, clampHighlightThreshold } from '../lib/tone';
 
 interface ControlsProps {
   state: AppState;
@@ -46,25 +48,12 @@ export const Controls: React.FC<ControlsProps> = ({
     });
   };
 
-  // Helper to convert internal resolution (20-2048) to slider percentage (100-0)
-  // We treat 2048 as 0% glitch, 20 as 100% glitch.
-  const getGlitchPercent = (res: number) => {
-    if (res >= 2048) return 0;
-    // Map 500..20 to 1..100 roughly
-    if (res > 500) return 0; // Buffer zone
-    // Linear map from 500->1 to 20->100
-    const p = (500 - res) / (500 - 20) * 100;
-    return Math.max(0, Math.min(100, Math.round(p)));
-  };
+  // Convert internal resolution (20-2048) to slider percentage (0-100) and back.
+  // Logic lives in lib/glitch.ts so its round-trip is locked under tests.
+  const getGlitchPercent = resToGlitchPercent;
 
   const handleGlitchChange = (val: number) => {
-    let newRes;
-    if (val <= 0) {
-      newRes = 2048; // Off
-    } else {
-      newRes = 500 - ((val) / 100) * (500 - 20);
-    }
-    setState(prev => ({ ...prev, pixelation: newRes }));
+    setState(prev => ({ ...prev, pixelation: glitchPercentToRes(val) }));
   };
 
   const handlePresetSelect = (preset: Preset) => {
@@ -172,7 +161,7 @@ export const Controls: React.FC<ControlsProps> = ({
                 value={state.shadowThreshold}
                 onChange={(e) => {
                   const v = parseFloat(e.target.value);
-                  setState(prev => ({ ...prev, shadowThreshold: Math.min(v, prev.highlightThreshold - 0.02) }));
+                  setState(prev => ({ ...prev, shadowThreshold: clampShadowThreshold(v, prev.highlightThreshold) }));
                 }}
                 className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-violet-500"
               />
@@ -188,7 +177,7 @@ export const Controls: React.FC<ControlsProps> = ({
                 value={state.highlightThreshold}
                 onChange={(e) => {
                   const v = parseFloat(e.target.value);
-                  setState(prev => ({ ...prev, highlightThreshold: Math.max(v, prev.shadowThreshold + 0.02) }));
+                  setState(prev => ({ ...prev, highlightThreshold: clampHighlightThreshold(v, prev.shadowThreshold) }));
                 }}
                 className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
               />

@@ -32,5 +32,3 @@ export interface AppState {
   // UI Features
   zenMode: boolean;
 }
-
-export const DEFAULT_IMAGE = "https://picsum.photos/800/800";

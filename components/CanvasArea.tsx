@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { AppState, Palette } from '../types';
 import { PosterizationMaterial } from '../webgl/PosterizationMaterial';
+import { containScale } from '../lib/imageFit';
 
 /** Signature of the imperative export function exposed to the parent. */
 export type ExportFn = () => Promise<Blob | null>;
@@ -177,23 +178,10 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({ state, activePalette, on
 
     const imageAspect = iw / ih;
     const containerAspect = containerRef.current.clientWidth / containerRef.current.clientHeight;
-    
-    // Fit 'contain' logic for the plane
-    // The camera covers height 2 (-1 to 1). Width is 2 * containerAspect.
-    
-    let scaleX = 1;
-    let scaleY = 1;
 
-    if (imageAspect > containerAspect) {
-      // Image is wider than container: Fit to width
-      scaleX = containerAspect;
-      scaleY = containerAspect / imageAspect;
-    } else {
-      // Image is taller than container: Fit to height
-      scaleX = imageAspect;
-      scaleY = 1;
-    }
-    
+    // 'Contain' fit for the plane (logic in lib/imageFit.ts, locked under tests).
+    const { scaleX, scaleY } = containScale(imageAspect, containerAspect);
+
     // Apply to mesh and flip
     planeRef.current.scale.set(
       state.flipX ? -scaleX : scaleX,

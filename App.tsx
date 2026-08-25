@@ -3,15 +3,16 @@ import { Controls } from './components/Controls';
 import { CanvasArea, ExportFn, CaptureFn } from './components/CanvasArea';
 import { GridOverlay } from './components/GridOverlay';
 import { Tooltip } from './components/Tooltip';
-import { AppState, DEFAULT_IMAGE, Palette } from './types';
-import { PALETTES } from './constants';
+import { AppState, Palette } from './types';
+import { PALETTES, STARTER_IMAGE } from './constants';
 import { fileToDataUri } from './services/imageService';
+import { shouldUseWebShare } from './lib/saveTarget';
 import { useHistory } from './components/HistoryHook';
 import { Maximize, Minimize, Copy, Code, EyeOff, Undo, Redo, Shuffle, Settings2, Menu, Download, SwitchCamera } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const INITIAL_STATE: AppState = {
-  imageSrc: DEFAULT_IMAGE,
+  imageSrc: STARTER_IMAGE,
   isVideo: false,
   steps: 6,
   pixelation: 2048,
@@ -132,10 +133,11 @@ const App: React.FC = () => {
     return null;
   };
 
-  // Bulletproof multi-device save. Uses the Web Share API (native share sheet /
-  // "Save Image" → Camera Roll or Files) when the device supports sharing files;
-  // otherwise falls back to an object-URL download link. Works on iOS/Android
-  // Safari & Chrome as well as desktop browsers.
+  // Multi-device save. On touch-first devices (phones/tablets) we use the native
+  // share sheet so "Save Image → Photos/Files" is one tap; on desktop — including
+  // Chromebooks and Windows Chrome, which also support Web Share now — we always
+  // do a direct file download so the PNG lands in the Downloads folder. See
+  // lib/saveTarget.ts for why the old canShare-only check saved on the wrong path.
   const handleExportAndSave = async () => {
     if (isSaving) return;
     setIsSaving(true);
@@ -148,14 +150,13 @@ const App: React.FC = () => {
       const fileName = 'art-project.png';
       const file = new File([blob], fileName, { type: 'image/png' });
 
-      // Prefer the native share sheet on capable (mostly mobile) devices.
       const nav = navigator as Navigator & {
         canShare?: (data?: ShareData) => boolean;
         share?: (data?: ShareData) => Promise<void>;
       };
-      if (nav.canShare && nav.share && nav.canShare({ files: [file] })) {
+      if (shouldUseWebShare(window.matchMedia?.bind(window), nav, file)) {
         try {
-          await nav.share({ files: [file], title: 'My Poster Art' });
+          await nav.share!({ files: [file], title: 'My Poster Art' });
           return;
         } catch (err) {
           // User cancelled or share failed — fall through to download.
