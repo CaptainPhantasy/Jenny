@@ -3,8 +3,8 @@ import { Controls } from './components/Controls';
 import { CanvasArea, ExportFn, CaptureFn } from './components/CanvasArea';
 import { GridOverlay } from './components/GridOverlay';
 import { Tooltip } from './components/Tooltip';
-import { AppState, DEFAULT_IMAGE, Palette } from './types';
-import { PALETTES } from './constants';
+import { AppState, Palette } from './types';
+import { PALETTES, STARTER_IMAGE } from './constants';
 import { fileToDataUri } from './services/imageService';
 import { shouldUseWebShare } from './lib/saveTarget';
 import { useHistory } from './components/HistoryHook';
@@ -12,7 +12,7 @@ import { Maximize, Minimize, Copy, Code, EyeOff, Undo, Redo, Shuffle, Settings2,
 import { motion, AnimatePresence } from 'framer-motion';
 
 const INITIAL_STATE: AppState = {
-  imageSrc: DEFAULT_IMAGE,
+  imageSrc: STARTER_IMAGE,
   isVideo: false,
   steps: 6,
   pixelation: 2048,
