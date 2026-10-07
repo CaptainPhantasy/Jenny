@@ -30,6 +30,11 @@ describe('glitchPercentToRes', () => {
   it('maps 100% to the most-pixelated resolution (20)', () => {
     expect(glitchPercentToRes(100)).toBeCloseTo(20, 6);
   });
+  it('clamps percentages above 100% to the minimum resolution (20)', () => {
+    for (const pct of [100.1, 125, 200, 1000, Infinity]) {
+      expect(glitchPercentToRes(pct)).toBe(20);
+    }
+  });
   it('round-trips within rounding tolerance for active values', () => {
     for (const pct of [10, 25, 50, 75, 100]) {
       expect(resToGlitchPercent(glitchPercentToRes(pct))).toBeCloseTo(pct, 0);
