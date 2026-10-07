@@ -13,5 +13,5 @@ export function resToGlitchPercent(res: number): number {
 /** Slider percentage (0..100) -> internal resolution. */
 export function glitchPercentToRes(pct: number): number {
   if (pct <= 0) return 2048; // Off
-  return 500 - (pct / 100) * (500 - 20);
+  return 500 - (Math.min(pct, 100) / 100) * (500 - 20);
 }
